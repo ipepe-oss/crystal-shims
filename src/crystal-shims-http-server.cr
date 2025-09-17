@@ -1,126 +1,110 @@
 require "http/server"
 require "json"
 
-struct Crystal::Shims::HTTP::Route
+class Crystal::Shims::HTTP::RouteHandler
+  include ::HTTP::Handler
+
   getter method : String
   getter path : String
+  getter path_regex : Regex
+  getter param_names : Array(String)
   getter handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String))
   getter content_type : String?
 
-  def initialize(@method : String, @path : String, @content_type : String? = nil, &@handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handler = handler
+  def initialize(method : String, path : String, content_type : String? = nil, &@handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @method = method
+    @path = path
+    @content_type = content_type
+    @path_regex, @param_names = compile_path(path)
+  end
+
+  def call(context)
+    return call_next(context) unless context.request.method == @method
+
+    match = @path_regex.match(context.request.path)
+    return call_next(context) unless match
+
+    params = extract_params(match, @param_names)
+    response = @handler.call(context, params)
+
+    # Auto-detect content type if not explicitly set
+    if content_type = @content_type
+      context.response.content_type = content_type
+    elsif response.is_a?(Hash)
+      context.response.content_type = "application/json"
+    else
+      context.response.content_type = "text/html"
+    end
+
+    # Format response based on type
+    if response.is_a?(Hash)
+      context.response.print(response.to_json)
+    else
+      context.response.print(response.to_s)
+    end
+  end
+
+  private def compile_path(path : String) : {Regex, Array(String)}
+    param_names = [] of String
+    return {Regex.new("^\\#{path}$"), param_names} unless path.includes?(':')
+
+    pattern = path.gsub(/:([a-zA-Z_][a-zA-Z0-9_]*)/) do |match|
+      param_names << match[1..-1]
+      "([^/]+)"
+    end
+
+    {Regex.new("^\\#{pattern}$"), param_names}
+  end
+
+  private def extract_params(match : Regex::MatchData, param_names : Array(String)) : Hash(String, String)
+    params = {} of String => String
+    param_names.each_with_index do |name, i|
+      params[name] = match[i + 1]
+    end
+    params
   end
 end
 
 class Crystal::Shims::HTTP::Router
   include ::HTTP::Handler
 
-  @routes = {} of String => Hash(String, Route)
+  @handlers = [] of RouteHandler
+  @next_handler : ::HTTP::Handler? = nil
 
   def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["GET"] ||= {} of String => Route
-    @routes["GET"][path] = Route.new("GET", path, content_type, &block)
+    @handlers << RouteHandler.new("GET", route.to_s, content_type, &block)
   end
 
   def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["POST"] ||= {} of String => Route
-    @routes["POST"][path] = Route.new("POST", path, content_type, &block)
+    @handlers << RouteHandler.new("POST", route.to_s, content_type, &block)
   end
 
   def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["PUT"] ||= {} of String => Route
-    @routes["PUT"][path] = Route.new("PUT", path, content_type, &block)
+    @handlers << RouteHandler.new("PUT", route.to_s, content_type, &block)
   end
 
   def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["DELETE"] ||= {} of String => Route
-    @routes["DELETE"][path] = Route.new("DELETE", path, content_type, &block)
+    @handlers << RouteHandler.new("DELETE", route.to_s, content_type, &block)
   end
 
   def call(context)
-    method = context.request.method
-    path = context.request.path
+    # Set up the handler chain
+    current_handler = @next_handler
+    @handlers.reverse_each do |handler|
+      handler.next = current_handler
+      current_handler = handler
+    end
 
-    route, params = find_route(method, path)
-
-    if route
-      response = route.handler.call(context, params)
-
-      # Auto-detect content type if not explicitly set
-      if content_type = route.content_type
-        context.response.content_type = content_type
-      elsif response.is_a?(Hash)
-        context.response.content_type = "application/json"
-      else
-        context.response.content_type = "text/html"
-      end
-
-      # Format response based on type
-      if response.is_a?(Hash)
-        context.response.print(response.to_json)
-      else
-        context.response.print(response.to_s)
-      end
+    # Start the chain or call next if no handlers
+    if current_handler
+      current_handler.call(context)
     else
       call_next(context)
     end
   end
 
-  private def find_route(method : String, path : String) : {Route?, Hash(String, String)}
-    # Try exact match first
-    if method_routes = @routes[method]?
-      if route = method_routes[path]?
-        return {route, {} of String => String}
-      end
-    end
-
-    # Try parameterized routes
-    if method_routes = @routes[method]?
-      method_routes.each do |route_path, route|
-        if route_path.includes?(':')
-          match_result = match_route(route_path, path)
-          if match_result
-            return {route, match_result}
-          end
-        end
-      end
-    end
-
-    {nil, {} of String => String}
-  end
-
-  private def match_route(route_path : String, request_path : String) : Hash(String, String)?
-    route_parts = route_path.split('/')
-    request_parts = request_path.split('/')
-
-    return nil if route_parts.size != request_parts.size
-
-    params = {} of String => String
-
-    route_parts.each_with_index do |route_part, i|
-      if route_part.starts_with?(':')
-        param_name = route_part[1..-1]
-        params[param_name] = request_parts[i]
-      elsif route_part != request_parts[i]
-        return nil
-      end
-    end
-
-    params
-  end
-
   def routes
-    result = [] of String
-    @routes.each do |method, paths|
-      paths.each do |path, _|
-        result << "#{method} #{path}"
-      end
-    end
-    result
+    @handlers.map { |handler| "#{handler.method} #{handler.path}" }
   end
 end
 
