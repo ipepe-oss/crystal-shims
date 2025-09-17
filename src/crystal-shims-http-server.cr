@@ -12,37 +12,36 @@ struct Crystal::Shims::HTTP::Route
   end
 end
 
-class Crystal::Shims::HTTP::Server
+class Crystal::Shims::HTTP::Router
+  include ::HTTP::Handler
+
   @routes = {} of String => Hash(String, Route)
-  @server : ::HTTP::Server?
-  @host : String
-  @port : Int32
 
-  def initialize(@host : String = "0.0.0.0", @port : Int32 = 8080)
+  def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    path = route.to_s
+    @routes["GET"] ||= {} of String => Route
+    @routes["GET"][path] = Route.new("GET", path, content_type, &block)
   end
 
-  def run
-    @server = ::HTTP::Server.new([
-      ::HTTP::ErrorHandler.new,
-      ::HTTP::LogHandler.new,
-      ::HTTP::CompressHandler.new,
-    ]) do |context|
-      handle_request(context)
-    end
-
-    address = @server.not_nil!.bind_tcp @host, @port
-    puts "Listening on http://#{address}"
-    @server.not_nil!.listen
+  def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    path = route.to_s
+    @routes["POST"] ||= {} of String => Route
+    @routes["POST"][path] = Route.new("POST", path, content_type, &block)
   end
 
-  def stop
-    if server = @server
-      server.close
-      puts "Server stopped"
-    end
+  def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    path = route.to_s
+    @routes["PUT"] ||= {} of String => Route
+    @routes["PUT"][path] = Route.new("PUT", path, content_type, &block)
   end
 
-  private def handle_request(context)
+  def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    path = route.to_s
+    @routes["DELETE"] ||= {} of String => Route
+    @routes["DELETE"][path] = Route.new("DELETE", path, content_type, &block)
+  end
+
+  def call(context)
     method = context.request.method
     path = context.request.path
 
@@ -67,9 +66,7 @@ class Crystal::Shims::HTTP::Server
         context.response.print(response.to_s)
       end
     else
-      context.response.status_code = 404
-      context.response.content_type = "text/plain"
-      context.response.print("404 Not Found")
+      call_next(context)
     end
   end
 
@@ -116,30 +113,6 @@ class Crystal::Shims::HTTP::Server
     params
   end
 
-  def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["GET"] ||= {} of String => Route
-    @routes["GET"][path] = Route.new("GET", path, content_type, &block)
-  end
-
-  def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["POST"] ||= {} of String => Route
-    @routes["POST"][path] = Route.new("POST", path, content_type, &block)
-  end
-
-  def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["PUT"] ||= {} of String => Route
-    @routes["PUT"][path] = Route.new("PUT", path, content_type, &block)
-  end
-
-  def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    path = route.to_s
-    @routes["DELETE"] ||= {} of String => Route
-    @routes["DELETE"][path] = Route.new("DELETE", path, content_type, &block)
-  end
-
   def routes
     result = [] of String
     @routes.each do |method, paths|
@@ -148,6 +121,57 @@ class Crystal::Shims::HTTP::Server
       end
     end
     result
+  end
+end
+
+class Crystal::Shims::HTTP::Server
+  @server : ::HTTP::Server?
+  @host : String
+  @port : Int32
+  @router = Router.new
+
+  def initialize(@host : String = "0.0.0.0", @port : Int32 = 8080)
+  end
+
+  def run
+    @server = ::HTTP::Server.new([
+      ::HTTP::ErrorHandler.new,
+      ::HTTP::LogHandler.new,
+      ::HTTP::CompressHandler.new,
+      @router,
+      ::HTTP::StaticFileHandler.new("./public", fallthrough: true, directory_listing: false),
+    ])
+
+    address = @server.not_nil!.bind_tcp @host, @port
+    puts "Listening on http://#{address}"
+    @server.not_nil!.listen
+  end
+
+  def stop
+    if server = @server
+      server.close
+      puts "Server stopped"
+    end
+  end
+
+  def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @router.get(route, content_type, &block)
+  end
+
+  def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @router.post(route, content_type, &block)
+  end
+
+  def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @router.put(route, content_type, &block)
+  end
+
+  def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @router.delete(route, content_type, &block)
+  end
+
+  def routes
+    @router.routes
   end
 end
 
