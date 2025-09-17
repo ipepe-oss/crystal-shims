@@ -1,0 +1,13 @@
+name: crystal-shims
+version: 0.1.0
+
+authors:
+  - Patryk Ptasiński <patryk@ipepe.pl>
+
+targets:
+  crystal-shims:
+    main: src/crystal-shims.cr
+
+crystal: '>= 1.16.2'
+
+license: MIT
