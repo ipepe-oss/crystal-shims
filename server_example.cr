@@ -1,6 +1,6 @@
 require "./src/crystal-shims-http-server"
 
-app = Crystal::Shims::HTTP::Server.new("0.0.0.0", 8081)
+app = Crystal::Shims::HTTP::Server.new
 
 # Simple route without parameters
 app.route("GET", "/") do |context, params|
@@ -53,6 +53,5 @@ app.route("GET", "/custom", [] of String, "application/xml") do |context, params
 end
 
 puts "Server configured with routes:"
-app.routes.each { |route| puts "  #{route}" }
 
-app.run
+app.run("0.0.0.0", 8081)
