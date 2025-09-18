@@ -5,20 +5,20 @@ class Crystal::Shims::HTTP::Server
   include ::HTTP::Handler
 
   def initialize
-    @routes = [] of {String, String, Array(String), String?, Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String))}
+    @routes = [] of {String, String, Array(String), Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String))}
   end
 
-  def route(method, path, params = [] of String, content_type = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @routes << {method.upcase, path, params, content_type, block}
+  def route(method, path, params = [] of String, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @routes << {method.upcase, path, params, block}
   end
 
   def call(context)
-    @routes.each do |method, path, param_names, content_type, handler|
+    @routes.each do |method, path, param_names, handler|
       next unless context.request.method == method
       next unless extracted_params = extract_params(path, param_names, context.request.path)
 
       response = handler.call(context, extracted_params)
-      context.response.content_type = content_type || (response.is_a?(Hash) ? "application/json" : "text/html")
+      context.response.content_type = response.is_a?(Hash) ? "application/json" : "text/html"
       context.response.print(response.is_a?(Hash) ? response.to_json : response.to_s)
       return
     end

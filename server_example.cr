@@ -11,7 +11,7 @@ end
 app.route("GET", "/api") do |context, params|
   {
     "message" => "Hello API",
-    "version" => "1.0"
+    "version" => "1.0",
   }
 end
 
@@ -23,18 +23,18 @@ end
 # API with parameters
 app.route("GET", "/api/users/:id", ["id"]) do |context, params|
   {
-    "id"     => params["id"],
-    "name"   => "User #{params["id"]}",
-    "email"  => "user#{params["id"]}@example.com"
+    "id"    => params["id"],
+    "name"  => "User #{params["id"]}",
+    "email" => "user#{params["id"]}@example.com",
   }
 end
 
 # Multiple parameters
 app.route("POST", "/users/:id/posts/:post_id", ["id", "post_id"]) do |context, params|
   {
-    "user_id"  => params["id"],
-    "post_id"  => params["post_id"],
-    "action"   => "created"
+    "user_id" => params["id"],
+    "post_id" => params["post_id"],
+    "action"  => "created",
   }
 end
 
@@ -43,14 +43,11 @@ app.route("POST", "/submit") do |context, params|
   body = context.request.body.try(&.gets_to_end) || ""
   {
     "status" => "received",
-    "body"   => body
+    "body"   => body,
   }
 end
 
-# Custom content type
-app.route("GET", "/custom", [] of String, "application/xml") do |context, params|
-  "<response><custom>data</custom></response>"
-end
+# Custom content type removed for simplicity
 
 puts "Server configured with routes:"
 

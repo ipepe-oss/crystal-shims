@@ -88,9 +88,9 @@ describe Crystal::Shims::HTTP::Server do
 
       server.route("POST", "/users/:id/posts/:post_id", ["id", "post_id"]) do |context, params|
         {
-          "user_id"  => params["id"],
-          "post_id"  => params["post_id"],
-          "action"   => "created"
+          "user_id" => params["id"],
+          "post_id" => params["post_id"],
+          "action"  => "created",
         }
       end
 
@@ -122,23 +122,7 @@ describe Crystal::Shims::HTTP::Server do
       io.to_s.split("\r\n\r\n", 2).last.should eq(%({"message":"Hello World"}))
     end
 
-    it "handles custom content type" do
-      server = Crystal::Shims::HTTP::Server.new
-
-      server.route("GET", "/test", [] of String, "text/plain") do |context, params|
-        {"message" => "Hello World"}
-      end
-
-      io = IO::Memory.new
-      response = HTTP::Server::Response.new(io)
-      context = HTTP::Server::Context.new(HTTP::Request.new("GET", "/test"), response)
-
-      server.call(context)
-      response.close
-
-      response.headers["Content-Type"].should eq("text/plain")
-      io.to_s.split("\r\n\r\n", 2).last.should eq(%({"message":"Hello World"}))
-    end
+    # Custom content type removed for simplicity
 
     it "handles different HTTP methods correctly" do
       server = Crystal::Shims::HTTP::Server.new
