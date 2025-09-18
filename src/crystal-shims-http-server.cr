@@ -6,25 +6,23 @@ class Crystal::Shims::HTTP::RouteHandler
 
   getter method : String
   getter path : String
-  getter path_regex : Regex
   getter param_names : Array(String)
   getter handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String))
   getter content_type : String?
 
-  def initialize(method : String, path : String, content_type : String? = nil, &@handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+  def initialize(method : String, path : String, params : Array(String) = [] of String, content_type : String? = nil, &@handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
     @method = method
     @path = path
     @content_type = content_type
-    @path_regex, @param_names = compile_path(path)
+    @param_names = params
   end
 
   def call(context)
     return call_next(context) unless context.request.method == @method
 
-    match = @path_regex.match(context.request.path)
-    return call_next(context) unless match
+    params = extract_params(context.request.path)
+    return call_next(context) unless params
 
-    params = extract_params(match, @param_names)
     response = @handler.call(context, params)
 
     # Auto-detect content type if not explicitly set
@@ -44,23 +42,28 @@ class Crystal::Shims::HTTP::RouteHandler
     end
   end
 
-  private def compile_path(path : String) : {Regex, Array(String)}
-    param_names = [] of String
-    return {Regex.new("^\\#{path}$"), param_names} unless path.includes?(':')
+  private def extract_params(request_path : String) : Hash(String, String)?
+    # Simple path matching: split both paths and compare segments
+    path_segments = @path.split('/')
+    request_segments = request_path.split('/')
 
-    pattern = path.gsub(/:([a-zA-Z_][a-zA-Z0-9_]*)/) do |match|
-      param_names << match[1..-1]
-      "([^/]+)"
-    end
+    return nil if path_segments.size != request_segments.size
 
-    {Regex.new("^\\#{pattern}$"), param_names}
-  end
-
-  private def extract_params(match : Regex::MatchData, param_names : Array(String)) : Hash(String, String)
     params = {} of String => String
-    param_names.each_with_index do |name, i|
-      params[name] = match[i + 1]
+
+    path_segments.each_with_index do |segment, i|
+      if segment.starts_with?(':')
+        param_name = segment[1..-1]
+        if @param_names.includes?(param_name)
+          params[param_name] = request_segments[i]
+        else
+          return nil # Unknown parameter
+        end
+      elsif segment != request_segments[i]
+        return nil # Path mismatch
+      end
     end
+
     params
   end
 end
@@ -71,20 +74,8 @@ class Crystal::Shims::HTTP::Router
   @handlers = [] of RouteHandler
   @next_handler : ::HTTP::Handler? = nil
 
-  def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("GET", route.to_s, content_type, &block)
-  end
-
-  def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("POST", route.to_s, content_type, &block)
-  end
-
-  def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("PUT", route.to_s, content_type, &block)
-  end
-
-  def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("DELETE", route.to_s, content_type, &block)
+  def route(method : String, path : String, params : Array(String) = [] of String, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @handlers << RouteHandler.new(method.upcase, path, params, content_type, &block)
   end
 
   def call(context)
@@ -138,20 +129,8 @@ class Crystal::Shims::HTTP::Server
     end
   end
 
-  def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.get(route, content_type, &block)
-  end
-
-  def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.post(route, content_type, &block)
-  end
-
-  def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.put(route, content_type, &block)
-  end
-
-  def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.delete(route, content_type, &block)
+  def route(method : String, path : String, params : Array(String) = [] of String, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
+    @router.route(method, path, params, content_type, &block)
   end
 
   def routes

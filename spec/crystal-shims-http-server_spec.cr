@@ -11,50 +11,42 @@ describe Crystal::Shims::HTTP::RouteHandler do
       handler.method.should eq("GET")
       handler.path.should eq("/test")
       handler.content_type.should be_nil
-    end
-
-    it "creates a handler with custom content type" do
-      handler = Crystal::Shims::HTTP::RouteHandler.new("POST", "/api", "application/json") do |context, params|
-        {"result" => "success"}
-      end
-
-      handler.content_type.should eq("application/json")
-    end
-
-    it "compiles simple path without parameters" do
-      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/simple/path") do |context, params|
-        "response"
-      end
-
-      handler.path_regex.match("/simple/path").should_not be_nil
-      handler.path_regex.match("/wrong/path").should be_nil
       handler.param_names.should be_empty
     end
 
-    it "compiles path with parameters" do
-      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/users/:id") do |context, params|
+    it "creates a handler with parameters" do
+      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/users/:id", ["id"]) do |context, params|
         "User #{params["id"]}"
       end
 
-      handler.path_regex.match("/users/123").should_not be_nil
-      handler.path_regex.match("/users/").should be_nil
+      handler.method.should eq("GET")
+      handler.path.should eq("/users/:id")
       handler.param_names.should eq(["id"])
     end
 
-    it "compiles path with multiple parameters" do
-      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/users/:id/posts/:post_id") do |context, params|
+    it "creates a handler with multiple parameters" do
+      handler = Crystal::Shims::HTTP::RouteHandler.new("POST", "/users/:id/posts/:post_id", ["id", "post_id"]) do |context, params|
         "User #{params["id"]} Post #{params["post_id"]}"
       end
 
-      handler.path_regex.match("/users/123/posts/456").should_not be_nil
-      handler.path_regex.match("/users/123/posts/").should be_nil
+      handler.method.should eq("POST")
+      handler.path.should eq("/users/:id/posts/:post_id")
       handler.param_names.should eq(["id", "post_id"])
+    end
+
+    it "creates a handler with custom content type" do
+      handler = Crystal::Shims::HTTP::RouteHandler.new("POST", "/api", ["id"], "application/json") do |context, params|
+        {"result" => "success", "id" => params["id"]}
+      end
+
+      handler.content_type.should eq("application/json")
+      handler.param_names.should eq(["id"])
     end
   end
 
   describe "parameter extraction" do
     it "passes correct parameters to handler" do
-      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/users/:id/posts/:post_id") do |context, params|
+      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/users/:id/posts/:post_id", ["id", "post_id"]) do |context, params|
         "User #{params["id"]} Post #{params["post_id"]}"
       end
 
@@ -142,7 +134,7 @@ describe Crystal::Shims::HTTP::RouteHandler do
     end
 
     it "handles custom content type" do
-      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/test", "text/plain") do |context, params|
+      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/test", [] of String, "text/plain") do |context, params|
         {"message" => "Hello World"}
       end
 
@@ -161,7 +153,7 @@ describe Crystal::Shims::HTTP::RouteHandler do
     end
 
     it "passes parameters to handler" do
-      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/users/:id") do |context, params|
+      handler = Crystal::Shims::HTTP::RouteHandler.new("GET", "/users/:id", ["id"]) do |context, params|
         "User #{params["id"]}"
       end
 
@@ -185,7 +177,7 @@ describe Crystal::Shims::HTTP::Router do
     it "registers GET routes" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.get("/test") do |context, params|
+      router.route("GET", "/test") do |context, params|
         "GET response"
       end
 
@@ -195,37 +187,37 @@ describe Crystal::Shims::HTTP::Router do
     it "registers POST routes" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.post("/test") do |context, params|
+      router.route("POST", "/api") do |context, params|
         "POST response"
       end
 
-      router.routes.should contain("POST /test")
+      router.routes.should contain("POST /api")
     end
 
-    it "registers PUT routes" do
+    it "registers routes with parameters" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.put("/test") do |context, params|
-        "PUT response"
+      router.route("GET", "/users/:id", ["id"]) do |context, params|
+        "User #{params["id"]}"
       end
 
-      router.routes.should contain("PUT /test")
+      router.routes.should contain("GET /users/:id")
     end
 
-    it "registers DELETE routes" do
+    it "registers routes with multiple parameters" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.delete("/test") do |context, params|
-        "DELETE response"
+      router.route("PUT", "/users/:id/posts/:post_id", ["id", "post_id"]) do |context, params|
+        "Update user #{params["id"]} post #{params["post_id"]}"
       end
 
-      router.routes.should contain("DELETE /test")
+      router.routes.should contain("PUT /users/:id/posts/:post_id")
     end
 
     it "registers routes with custom content type" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.get("/api", "application/json") do |context, params|
+      router.route("GET", "/api", [] of String, "application/json") do |context, params|
         {"api" => "response"}
       end
 
@@ -237,7 +229,7 @@ describe Crystal::Shims::HTTP::Router do
     it "handles matching GET request" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.get("/test") do |context, params|
+      router.route("GET", "/test") do |context, params|
         "GET response"
       end
 
@@ -254,7 +246,7 @@ describe Crystal::Shims::HTTP::Router do
     it "handles matching POST request" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.post("/test") do |context, params|
+      router.route("POST", "/test") do |context, params|
         "POST response"
       end
 
@@ -271,7 +263,7 @@ describe Crystal::Shims::HTTP::Router do
     it "returns 404 for non-matching route" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.get("/test") do |context, params|
+      router.route("GET", "/test") do |context, params|
         "GET response"
       end
 
@@ -282,7 +274,6 @@ describe Crystal::Shims::HTTP::Router do
       router.call(context)
       response.close
 
-      # Should not set response, allowing next handler to handle
       # Check if it's a 404 response
       io.to_s.should contain("404 Not Found")
     end
@@ -290,7 +281,7 @@ describe Crystal::Shims::HTTP::Router do
     it "handles routes with parameters" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.get("/users/:id") do |context, params|
+      router.route("GET", "/users/:id", ["id"]) do |context, params|
         "User #{params["id"]}"
       end
 
@@ -326,7 +317,7 @@ describe Crystal::Shims::HTTP::Server do
     it "delegates GET routes to router" do
       server = Crystal::Shims::HTTP::Server.new
 
-      server.get("/test") do |context, params|
+      server.route("GET", "/test") do |context, params|
         "GET response"
       end
 
@@ -336,7 +327,7 @@ describe Crystal::Shims::HTTP::Server do
     it "delegates POST routes to router" do
       server = Crystal::Shims::HTTP::Server.new
 
-      server.post("/test") do |context, params|
+      server.route("POST", "/test") do |context, params|
         "POST response"
       end
 
@@ -346,7 +337,7 @@ describe Crystal::Shims::HTTP::Server do
     it "delegates PUT routes to router" do
       server = Crystal::Shims::HTTP::Server.new
 
-      server.put("/test") do |context, params|
+      server.route("PUT", "/test") do |context, params|
         "PUT response"
       end
 
@@ -356,11 +347,21 @@ describe Crystal::Shims::HTTP::Server do
     it "delegates DELETE routes to router" do
       server = Crystal::Shims::HTTP::Server.new
 
-      server.delete("/test") do |context, params|
+      server.route("DELETE", "/test") do |context, params|
         "DELETE response"
       end
 
       server.routes.should contain("DELETE /test")
+    end
+
+    it "delegates routes with parameters" do
+      server = Crystal::Shims::HTTP::Server.new
+
+      server.route("GET", "/users/:id", ["id"]) do |context, params|
+        "User #{params["id"]}"
+      end
+
+      server.routes.should contain("GET /users/:id")
     end
   end
 
@@ -377,17 +378,15 @@ end
 describe "HTTP Server Integration" do
   describe "complete request flow" do
     it "handles multiple routes correctly" do
-      server = Crystal::Shims::HTTP::Server.new
-
-      server.get("/") do |context, params|
+      # Create a router directly for testing
+      router = Crystal::Shims::HTTP::Router.new
+      router.route("GET", "/") do |context, params|
         "<h1>Home</h1>"
       end
-
-      server.get("/api") do |context, params|
+      router.route("GET", "/api") do |context, params|
         {"message" => "API Response"}
       end
-
-      server.get("/users/:id") do |context, params|
+      router.route("GET", "/users/:id", ["id"]) do |context, params|
         {"user_id" => params["id"], "name" => "User #{params["id"]}"}
       end
 
@@ -395,19 +394,6 @@ describe "HTTP Server Integration" do
       io = IO::Memory.new
       response = HTTP::Server::Response.new(io)
       context = HTTP::Server::Context.new(HTTP::Request.new("GET", "/"), response)
-
-      # Create a router directly for testing
-      router = Crystal::Shims::HTTP::Router.new
-      router.get("/") do |context, params|
-        "<h1>Home</h1>"
-      end
-      router.get("/api") do |context, params|
-        {"message" => "API Response"}
-      end
-      router.get("/users/:id") do |context, params|
-        {"user_id" => params["id"], "name" => "User #{params["id"]}"}
-      end
-
       router.call(context)
       response.close
       io.to_s.split("\r\n\r\n", 2).last.should eq("<h1>Home</h1>")
@@ -430,36 +416,17 @@ describe "HTTP Server Integration" do
     end
 
     it "handles different HTTP methods correctly" do
-      server = Crystal::Shims::HTTP::Server.new
-
-      server.get("/resource") do |context, params|
-        "GET resource"
-      end
-
-      server.post("/resource") do |context, params|
-        "POST resource"
-      end
-
-      server.put("/resource") do |context, params|
-        "PUT resource"
-      end
-
-      server.delete("/resource") do |context, params|
-        "DELETE resource"
-      end
-
-      # Test each method
       router = Crystal::Shims::HTTP::Router.new
-      router.get("/resource") do |context, params|
+      router.route("GET", "/resource") do |context, params|
         "GET resource"
       end
-      router.post("/resource") do |context, params|
+      router.route("POST", "/resource") do |context, params|
         "POST resource"
       end
-      router.put("/resource") do |context, params|
+      router.route("PUT", "/resource") do |context, params|
         "PUT resource"
       end
-      router.delete("/resource") do |context, params|
+      router.route("DELETE", "/resource") do |context, params|
         "DELETE resource"
       end
 
@@ -476,11 +443,11 @@ describe "HTTP Server Integration" do
     it "handles content type auto-detection" do
       router = Crystal::Shims::HTTP::Router.new
 
-      router.get("/html") do |context, params|
+      router.route("GET", "/html") do |context, params|
         "<html><body>HTML Response</body></html>"
       end
 
-      router.get("/json") do |context, params|
+      router.route("GET", "/json") do |context, params|
         {"type" => "json", "content" => "auto-detected"}
       end
 
@@ -501,6 +468,25 @@ describe "HTTP Server Integration" do
       response.close
       response.headers["Content-Type"].should eq("application/json")
       io.to_s.split("\r\n\r\n", 2).last.should eq(%({"type":"json","content":"auto-detected"}))
+    end
+
+    it "handles multiple parameters correctly" do
+      router = Crystal::Shims::HTTP::Router.new
+
+      router.route("POST", "/users/:id/posts/:post_id", ["id", "post_id"]) do |context, params|
+        {
+          "user_id"  => params["id"],
+          "post_id"  => params["post_id"],
+          "action"   => "created"
+        }
+      end
+
+      io = IO::Memory.new
+      response = HTTP::Server::Response.new(io)
+      context = HTTP::Server::Context.new(HTTP::Request.new("POST", "/users/123/posts/456"), response)
+      router.call(context)
+      response.close
+      io.to_s.split("\r\n\r\n", 2).last.should eq(%({"user_id":"123","post_id":"456","action":"created"}))
     end
   end
 end

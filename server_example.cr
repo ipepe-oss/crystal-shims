@@ -2,26 +2,26 @@ require "./src/crystal-shims-http-server"
 
 app = Crystal::Shims::HTTP::Server.new("0.0.0.0", 8081)
 
-# String responses automatically get HTML content type
-app.get "/" do |context, params|
+# Simple route without parameters
+app.route("GET", "/") do |context, params|
   "<h1>hello world</h1>"
 end
 
-# Hash responses automatically get JSON content type
-app.get "/api" do |context, params|
+# API endpoint without parameters
+app.route("GET", "/api") do |context, params|
   {
     "message" => "Hello API",
     "version" => "1.0"
   }
 end
 
-# Route parameters with string response
-app.get "/users/:id" do |context, params|
+# Route with explicit parameters - much cleaner!
+app.route("GET", "/users/:id", ["id"]) do |context, params|
   "<h1>User Profile</h1><p>User ID: #{params["id"]}</p>"
 end
 
-# Route parameters with hash response
-app.get "/api/users/:id" do |context, params|
+# API with parameters
+app.route("GET", "/api/users/:id", ["id"]) do |context, params|
   {
     "id"     => params["id"],
     "name"   => "User #{params["id"]}",
@@ -29,8 +29,17 @@ app.get "/api/users/:id" do |context, params|
   }
 end
 
-# POST route with hash response
-app.post "/submit" do |context, params|
+# Multiple parameters
+app.route("POST", "/users/:id/posts/:post_id", ["id", "post_id"]) do |context, params|
+  {
+    "user_id"  => params["id"],
+    "post_id"  => params["post_id"],
+    "action"   => "created"
+  }
+end
+
+# POST route without parameters
+app.route("POST", "/submit") do |context, params|
   body = context.request.body.try(&.gets_to_end) || ""
   {
     "status" => "received",
@@ -38,9 +47,9 @@ app.post "/submit" do |context, params|
   }
 end
 
-# Custom content type (overrides auto-detection)
-app.get "/custom" do |context, params|
-  {"custom" => "response"}.to_json
+# Custom content type
+app.route("GET", "/custom", [] of String, "application/xml") do |context, params|
+  "<response><custom>data</custom></response>"
 end
 
 puts "Server configured with routes:"
