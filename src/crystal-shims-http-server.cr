@@ -1,208 +1,108 @@
 require "http/server"
 require "json"
 
-class Crystal::Shims::HTTP::RouteHandler
-  include ::HTTP::Handler
+module Crystal::Shims::HTTP
+  alias Response = String | Hash(String, String)
+  alias Handler = Proc(::HTTP::Server::Context, Hash(String, String), Response)
 
-  getter method : String
-  getter path : String
-  getter path_regex : Regex
-  getter param_names : Array(String)
-  getter handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String))
-  getter content_type : String?
+  record Route, method : String, path : String, handler : Handler, content_type : String? = nil do
+    def matches?(req_method, req_path)
+      @method == req_method && req_path.matches?(regex)
+    end
 
-  def initialize(method : String, path : String, content_type : String? = nil, &@handler : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @method = method
-    @path = path
-    @content_type = content_type
-    @path_regex, @param_names = compile_path(path)
+    def extract_params(req_path)
+      params = {} of String => String
+      if match = req_path.match(regex)
+        param_names.each_with_index { |name, i| params[name] = match[i + 1] }
+      end
+      params
+    end
+
+    private def regex
+      @regex ||= Regex.new("^#{@path.gsub(/:(\w+)/) { "([^/]+)" }}$")
+    end
+
+    private def param_names
+      @param_names ||= @path.scan(/:(\w+)/).map(&.[1])
+    end
+
+    @param_names : Array(String)?
   end
 
-  def call(context)
-    return call_next(context) unless context.request.method == @method
+  class Router
+    include ::HTTP::Handler
+    getter routes = [] of Route
 
-    match = @path_regex.match(context.request.path)
-    return call_next(context) unless match
+    {% for method in %w[get post put delete] %}
+      def {{method.id}}(path, content_type = nil, &handler : Handler)
+        @routes << Route.new("{{method.id.upcase}}", path.to_s, handler, content_type)
+      end
+    {% end %}
 
-    params = extract_params(match, @param_names)
-    response = @handler.call(context, params)
-
-    # Auto-detect content type if not explicitly set
-    if content_type = @content_type
-      context.response.content_type = content_type
-    elsif response.is_a?(Hash)
-      context.response.content_type = "application/json"
-    else
-      context.response.content_type = "text/html"
-    end
-
-    # Format response based on type
-    if response.is_a?(Hash)
-      context.response.print(response.to_json)
-    else
-      context.response.print(response.to_s)
+    def call(context)
+      if route = @routes.find(&.matches?(context.request.method, context.request.path))
+        params = route.extract_params(context.request.path)
+        response = route.handler.call(context, params)
+        context.response.content_type = route.content_type || (response.is_a?(Hash) ? "application/json" : "text/html")
+        context.response.print(response.is_a?(Hash) ? response.to_json : response)
+      else
+        call_next(context)
+      end
     end
   end
 
-  private def compile_path(path : String) : {Regex, Array(String)}
-    param_names = [] of String
-    return {Regex.new("^\\#{path}$"), param_names} unless path.includes?(':')
-
-    pattern = path.gsub(/:([a-zA-Z_][a-zA-Z0-9_]*)/) do |match|
-      param_names << match[1..-1]
-      "([^/]+)"
+  class Server
+    def initialize(@host = "0.0.0.0", @port = 8080, @router = Router.new)
     end
 
-    {Regex.new("^\\#{pattern}$"), param_names}
-  end
+    def run
+      server = ::HTTP::Server.new([
+        ::HTTP::ErrorHandler.new,
+        ::HTTP::LogHandler.new,
+        ::HTTP::CompressHandler.new,
+        @router,
+        ::HTTP::StaticFileHandler.new("./public", fallthrough: true)
+      ])
 
-  private def extract_params(match : Regex::MatchData, param_names : Array(String)) : Hash(String, String)
-    params = {} of String => String
-    param_names.each_with_index do |name, i|
-      params[name] = match[i + 1]
+      puts "Listening on http://#{server.bind_tcp(@host, @port)}"
+      server.listen
     end
-    params
+
+    def get(path, content_type = nil, &handler : Handler)
+      @router.get(path, content_type, &handler)
+    end
+
+    def post(path, content_type = nil, &handler : Handler)
+      @router.post(path, content_type, &handler)
+    end
+
+    def put(path, content_type = nil, &handler : Handler)
+      @router.put(path, content_type, &handler)
+    end
+
+    def delete(path, content_type = nil, &handler : Handler)
+      @router.delete(path, content_type, &handler)
+    end
+
+    def routes
+      @router.routes
+    end
   end
 end
 
-class Crystal::Shims::HTTP::Router
-  include ::HTTP::Handler
-
-  @handlers = [] of RouteHandler
-  @next_handler : ::HTTP::Handler? = nil
-
-  def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("GET", route.to_s, content_type, &block)
-  end
-
-  def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("POST", route.to_s, content_type, &block)
-  end
-
-  def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("PUT", route.to_s, content_type, &block)
-  end
-
-  def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @handlers << RouteHandler.new("DELETE", route.to_s, content_type, &block)
-  end
-
-  def call(context)
-    # Set up the handler chain
-    current_handler = @next_handler
-    @handlers.reverse_each do |handler|
-      handler.next = current_handler
-      current_handler = handler
-    end
-
-    # Start the chain or call next if no handlers
-    if current_handler
-      current_handler.call(context)
-    else
-      call_next(context)
-    end
-  end
-
-  def routes
-    @handlers.map { |handler| "#{handler.method} #{handler.path}" }
-  end
-end
-
-class Crystal::Shims::HTTP::Server
-  @server : ::HTTP::Server?
-  @host : String
-  @port : Int32
-  @router = Router.new
-
-  def initialize(@host : String = "0.0.0.0", @port : Int32 = 8080)
-  end
-
-  def run
-    @server = ::HTTP::Server.new([
-      ::HTTP::ErrorHandler.new,
-      ::HTTP::LogHandler.new,
-      ::HTTP::CompressHandler.new,
-      @router,
-      ::HTTP::StaticFileHandler.new("./public", fallthrough: true, directory_listing: false),
-    ])
-
-    address = @server.not_nil!.bind_tcp @host, @port
-    puts "Listening on http://#{address}"
-    @server.not_nil!.listen
-  end
-
-  def stop
-    if server = @server
-      server.close
-      puts "Server stopped"
-    end
-  end
-
-  def get(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.get(route, content_type, &block)
-  end
-
-  def post(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.post(route, content_type, &block)
-  end
-
-  def put(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.put(route, content_type, &block)
-  end
-
-  def delete(route, content_type : String? = nil, &block : Proc(::HTTP::Server::Context, Hash(String, String), String | Hash(String, String)))
-    @router.delete(route, content_type, &block)
-  end
-
-  def routes
-    @router.routes
-  end
-end
-
+# Test server
 app = Crystal::Shims::HTTP::Server.new("0.0.0.0", 8081)
 
-# String responses automatically get HTML content type
-app.get "/" do |context, params|
-  "<h1>hello world</h1>"
-end
+app.get "/" { |_, _| "<h1>Hello World</h1>" }
 
-# Hash responses automatically get JSON content type
-app.get "/api" do |context, params|
-  {
-    "message" => "Hello API",
-    "version" => "1.0"
-  }
-end
+app.get "/api" { |_, _| {"message" => "Hello API", "version" => "1.0"} }
 
-# Route parameters with string response
-app.get "/users/:id" do |context, params|
-  "<h1>User Profile</h1><p>User ID: #{params["id"]}</p>"
-end
+app.get "/users/:id" { |_, params| "<h1>User #{params["id"]}</h1>" }
 
-# Route parameters with hash response
-app.get "/api/users/:id" do |context, params|
-  {
-    "id"     => params["id"],
-    "name"   => "User #{params["id"]}",
-    "email"  => "user#{params["id"]}@example.com"
-  }
-end
-
-# POST route with hash response
-app.post "/submit" do |context, params|
+app.post "/submit" do |context, _|
   body = context.request.body.try(&.gets_to_end) || ""
-  {
-    "status" => "received",
-    "body"   => body
-  }
+  {"status" => "received", "body" => body}
 end
 
-# Custom content type (overrides auto-detection)
-app.get "/custom" do |context, params|
-  {"custom" => "response"}.to_json
-end
-
-puts "Server configured with routes:"
-app.routes.each { |route| puts "  #{route}" }
-
+puts "Routes: #{app.routes.join(", ")}"
 app.run
