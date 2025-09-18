@@ -84,7 +84,7 @@ module Crystal::Shims::HTTP
       @router.delete(path, content_type, &handler)
     end
 
-    def routes
+    private def routes
       @router.routes
     end
   end
@@ -104,5 +104,4 @@ app.post "/submit" do |context, _|
   {"status" => "received", "body" => body}
 end
 
-puts "Routes: #{app.routes.join(", ")}"
 app.run
